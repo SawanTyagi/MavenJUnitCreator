@@ -1,5 +1,5 @@
 
-package creator;
+package com.example.MavenJUnitCreator;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -8,8 +8,11 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
-import java.util.ArrayList;
+import java.lang.reflect.Type;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -21,11 +24,6 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 
-import org.apache.commons.collections4.CollectionUtils;
-import org.mockito.Mockito;
-
-import ch.qos.logback.core.net.SyslogOutputStream;
-
 /**
  *
  * @author sawtyagi
@@ -33,6 +31,7 @@ import ch.qos.logback.core.net.SyslogOutputStream;
  */
 public class JUnitCreator {
 
+	private static int varPotfix = 1;
 	/**
 	 * @param args
 	 * @throws SecurityException
@@ -46,8 +45,11 @@ public class JUnitCreator {
 
 			final String pathOfTestClass = split[0] + "src\\test\\java" + split[1];
 			String fileNameWithPackage = split[1].replaceAll("\\\\", ".");
-			fileNameWithPackage = fileNameWithPackage.substring(1, fileNameWithPackage.length() - 5);// Remove first dot
-																										// and .java
+			fileNameWithPackage = fileNameWithPackage.substring(1, fileNameWithPackage.length() - 5);// Remove
+																										// first
+																										// dot
+																										// and
+																										// .java
 																										// extension
 
 			split = fileNameWithPackage.split("\\.");
@@ -69,9 +71,18 @@ public class JUnitCreator {
 			fileWriter.write(
 					"package " + fileNameWithPackage.substring(0, fileNameWithPackage.lastIndexOf(".")) + ";\n\n");
 
-			final Field[] allFields = Class.forName(fileNameWithPackage).getDeclaredFields();
+			// Getting the jar URL which contains target class
+			URL[] classLoaderUrls = new URL[] { new URL("file:///" + filePath) };
 
-			final Method[] allMethods = Class.forName(fileNameWithPackage).getDeclaredMethods();
+			// Create a new URLClassLoader
+			URLClassLoader urlClassLoader = new URLClassLoader(classLoaderUrls);
+
+			// Load the target class
+			Class<?> beanClass = urlClassLoader.loadClass(fileNameWithPackage);
+
+			final Field[] allFields = beanClass.getDeclaredFields();
+
+			final Method[] allMethods = beanClass.getDeclaredMethods();
 
 			JUnitCreator.createImportStatements(fileWriter, allFields, fileNameWithPackage);
 
@@ -91,6 +102,8 @@ public class JUnitCreator {
 
 			fileWriter.close();
 
+			System.out.println("JUnits created successfully.");
+
 		}
 	}
 
@@ -103,10 +116,15 @@ public class JUnitCreator {
 	 */
 	private static void createTestMethods(FileWriter fileWriter, Method[] allMethods, String name) {
 
-		Arrays.asList(allMethods).stream().filter(method -> method.getModifiers() != 2).forEach(method -> {
+		Arrays.asList(allMethods).stream().filter(method -> {
+			int modifiers = method.getModifiers();
+			String modifier = Modifier.toString(modifiers);
+			return modifier.contains("public");
+		}).forEach(method -> {
 			try {
+				fileWriter.append("/**\n* "+method.getName() + "Test"+"\n*\n*/");
 				fileWriter.append("@Test\n");
-				fileWriter.append("public void " + method.getName() + "Test(){\n}\n");
+				fileWriter.append("public void " + method.getName() + "Test(){\n//PREPARER\n//EXECUTER\n//VERIFIER\n}\n");
 			} catch (final IOException e) {
 			}
 		});
@@ -135,13 +153,13 @@ public class JUnitCreator {
 				Optional<Method> optionalMethod = methods.stream()
 						.filter(method -> calledMethodName.split("\\.")[1].equals(method.getName())).findFirst();
 				if (optionalMethod.isPresent()) {
-					Class returnType = optionalMethod.get().getReturnType();
-					String returnTypeString = returnType.getCanonicalName();
+					Type returnType = optionalMethod.get().getGenericReturnType();
+					String returnTypeString = returnType.getTypeName();
 					Parameter[] parameters = optionalMethod.get().getParameters();
-					
+
 					if (!"void".equals(returnTypeString)) {
-						methodBodyForNonVoid(methodProtoType, methodBody, random, field, optionalMethod, returnTypeString,
-								parameters);
+						methodBodyForNonVoid(methodProtoType, methodBody, random, field, optionalMethod,
+								returnTypeString, parameters);
 					} else {
 						methodBodyForVoid(methodBody, field, optionalMethod, parameters);
 					}
@@ -167,9 +185,9 @@ public class JUnitCreator {
 	 */
 	private static Map<Field, Set<String>> getMapOfFieldAndMethodCalls(final Field[] allFields, final String filePath) {
 		final File file = new File(filePath);
-		final Set<String> methodCalls = new HashSet<>();
 		final Map<Field, Set<String>> mapOfFieldAndMethodCalls = new HashMap<>();
 		Arrays.asList(allFields).stream().forEach(field -> {
+			final Set<String> methodCalls = new HashSet<>();
 			final String fieldName = field.getName();
 			try {
 				final BufferedReader br = new BufferedReader(new FileReader(file));
@@ -226,23 +244,24 @@ public class JUnitCreator {
 	 * @param returnTypeString
 	 * @param parameters
 	 */
-	private static void methodBodyForNonVoid(StringBuilder methodProtoType, StringBuilder methodBody, final Random random,
-			Field field, Optional<Method> optionalMethod, String returnTypeString, Parameter[] parameters) {
+	private static void methodBodyForNonVoid(StringBuilder methodProtoType, StringBuilder methodBody,
+			final Random random, Field field, Optional<Method> optionalMethod, String returnTypeString,
+			Parameter[] parameters) {
 		String[] split = returnTypeString.split("\\.");
-		StringBuilder returnVarName = new StringBuilder().append("returnVar")
-				.append(split[split.length - 1]).append(random.nextInt(100));
-		methodBody.append("Mockito.when(").append(field.getName()).append(".")
-				.append(optionalMethod.get().getName()).append("(");
-		
+		String varName = split[split.length - 1];
+		StringBuilder returnVarName = new StringBuilder().append(Character.toLowerCase(varName.charAt(0))).append(varName.substring(1, varName.length()-1))
+				.append(varPotfix++);
+		methodBody.append("Mockito.when(").append(field.getName()).append(".").append(optionalMethod.get().getName())
+				.append("(");
+
 		for (int i = 0; i < parameters.length; i++) {
 			methodBody.append("Matchers.any(),");
 		}
 		if ((methodBody.charAt(methodBody.length() - 1) + "").equals(",")) {
 			methodBody.deleteCharAt(methodBody.length() - 1);
 		}
-		methodBody.append(")).thenReturn(").append(returnVarName)
-		.append(");");
-		methodProtoType.append(split[split.length - 1]).append(" ").append(returnVarName).append(",");
+		methodBody.append(")).thenReturn(").append(returnVarName).append(");");
+		methodProtoType.append(returnTypeString).append(" ").append(returnVarName).append(",");
 	}
 
 	private static void closeClassSignature(final FileWriter fileWriter) throws IOException {
@@ -278,7 +297,7 @@ public class JUnitCreator {
 	 * @throws IOException
 	 */
 	private static void createClassSignature(final FileWriter fileWriter, final String name) throws IOException {
-		fileWriter.append("@RunWith(PowerMockRunner.class)\n@PowerMockIgnore(\"javax.management.*\")");
+		fileWriter.append("@RunWith(PowerMockRunner.class)\n@PowerMockIgnore(\"javax.management.*\")\n@PrepareForTest(value = { DomainServiceLocator.class, RegleMetierLocator.class })");
 		final String[] split = name.split("\\.");
 		fileWriter.append("\npublic class " + split[split.length - 2] + "{\n");
 
@@ -298,14 +317,22 @@ public class JUnitCreator {
 				"import org.mockito.InjectMocks;" + "\nimport org.mockito.Mock;" + "\nimport org.junit.runner.RunWith;"
 						+ "\nimport org.powermock.core.classloader.annotations.PowerMockIgnore;"
 						+ "\nimport org.powermock.modules.junit4.PowerMockRunner;" + "\nimport org.junit.Test;"
-						+ "\nimport org.mockito.Mockito;\n"
-						+ "\nimport org.mockito.Matchers;\n");
+						+ "\nimport org.mockito.Mockito;\n" 
+						+ "\nimport org.mockito.Matchers;\n"
+						+ "\nimport leclerc.wrf.backend.domaine.reglemetier.RegleMetierLocator;\n"
+						+ "\nimport leclerc.wrf.backend.domaine.service.DomainServiceLocator;\n"
+						+ "\nimport org.powermock.core.classloader.annotations.PrepareForTest;\n");
 		Arrays.asList(allFields).stream().forEach(field -> {
 			try {
-				fileWriter.append("import " + field.getType().toString().split(" ")[1] + ";\n"); // Remove class prefix
-																									// from field type
+				fileWriter.append("import " + field.getType().toString().split(" ")[1] + ";\n"); // Remove
+																									// class
+																									// prefix
+																									// from
+																									// field
+																									// type
 																									// name
-																									// by using
+																									// by
+																									// using
 																									// sub-string
 			} catch (final IOException e) {
 			}
